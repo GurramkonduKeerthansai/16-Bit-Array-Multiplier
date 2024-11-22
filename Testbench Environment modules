@@ -1,0 +1,229 @@
+//generator
+class multiplier_gen;
+  multiplier_tx tx;
+  virtual multiplier_int vif;
+
+  task run();
+    begin
+      $display("GEN");
+      vif = multiplier_cfg::vif;
+
+      for (int i = 0; i < 10; i++) begin
+        tx = new();
+        tx.randomize();
+ //with {a dist {1:=5, 0:=5}; b dist {1:=5, 0:=5};};
+        multiplier_cfg::gen2bfm.put(tx);  
+      end
+    end
+  endtask
+endclass
+
+//monitor
+class multiplier_mon;
+  virtual multiplier_int vif;
+  multiplier_tx tx;
+
+  task run();
+    begin
+      $display("MON");
+      vif = multiplier_cfg::vif;
+      forever begin
+        wait (vif.a !== 'bx && vif.b !== 'bx);
+        tx = new();
+        tx.a = vif.a;
+        tx.b = vif.b;
+        tx.product = vif.product;
+        multiplier_cfg::mon2ckr.put(tx);
+        multiplier_cfg::mon2cov.put(tx);
+        @(posedge vif.a or posedge vif.b);  
+      end
+    end
+  endtask
+endclass
+
+//interface
+interface multiplier_int;
+  logic [15:0] a,b;
+  logic [31:0] product;
+endinterface
+
+//checker
+class multiplier_ckr;
+  multiplier_tx tx;
+  task run();
+    $display("CKR");
+    forever begin
+      multiplier_cfg::mon2ckr.get(tx);
+      if (tx.product == tx.a * tx.b)
+        $display($time, " Correct: a=%b, b=%b, product=%b", tx.a, tx.b, tx.product);
+      else
+        $display($time, " ERROR: a=%b, b=%b, product=%b", tx.a, tx.b, tx.product);
+    end
+  endtask
+endclass
+
+//config
+class multiplier_cfg;
+  static virtual multiplier_int vif;
+  static mailbox gen2bfm = new();
+  static mailbox mon2ckr = new();
+  static mailbox mon2cov = new();
+endclass
+
+//transaction
+class multiplier_tx;
+  rand bit [15:0] a,b;
+  bit [31:0] product;
+endclass
+
+//environment
+class multiplier_env;
+  multiplier_gen gen = new();
+  multiplier_bfm bfm = new();
+  multiplier_mon mon = new();
+  multiplier_ckr ckr = new();
+  multiplier_cov cov = new();
+
+  task run();
+    fork
+      gen.run();
+      bfm.run();
+      mon.run();
+      ckr.run();
+      cov.run();
+    join
+  endtask
+endclass
+
+//driver
+class multiplier_bfm;
+  virtual multiplier_int vif;
+  multiplier_tx tx;
+  task run();
+    begin
+      $display("BFM");
+      vif = multiplier_cfg::vif;
+      forever begin
+        multiplier_cfg::gen2bfm.get(tx);
+        drive();
+      end
+    end
+  endtask
+  task drive();
+    begin
+      vif.a <= tx.a;
+      vif.b <= tx.b;
+    end
+  endtask	
+endclass
+
+//coverage
+class multiplier_cov;
+  multiplier_tx tx;
+  covergroup multiplier_cg;
+   out: coverpoint tx.product {
+     bins high_product = {[31:15]}; 
+     bins low_product = {[15:0]};   
+    }
+  endgroup
+
+  function new();
+    multiplier_cg = new();
+  endfunction
+
+  task run();
+    $display("COV");
+    forever begin
+      multiplier_cfg::mon2cov.get(tx);
+      multiplier_cg.sample();
+    end
+  endtask
+endclass
+
+//test
+program multiplier_tb;
+  multiplier_env env = new();
+  initial begin
+    env.run();
+  end
+endprogram
+
+//testbench_top
+`include "multiplier.v"
+`include "multiplier_cfg.sv"
+`include "multiplier_tx.sv"
+`include "multiplier_ckr.sv"
+`include "multiplier_cov.sv"
+`include "multiplier_mon.sv"
+`include "multiplier_bfm.sv"
+`include "multiplier_gen.sv"
+`include "multiplier_env.sv"
+`include "multiplier_int.sv"
+`include "multiplier_tb.sv"
+
+module top;
+  logic [15:0] a, b;
+  logic [31:0] product;
+
+  multiplier_int inf();  
+
+  multiplier dut (
+    .a(inf.a),
+    .b(inf.b),
+    .product(inf.product)
+  );
+
+  multiplier_tb tb();
+
+  initial begin
+    repeat (10) begin  
+      inf.a = $random;  
+      inf.b = $random; 
+      
+      #10; 
+    end
+    $finish;
+  end
+
+  initial begin
+    multiplier_cfg::vif = inf;  
+  end
+
+  initial begin
+     $dumpfile("dump.vcd");
+     $dumpvars(1, top.dut);
+   end
+endmodule
+
+//run.do
+ vsim -c +access +r;
+ run -all;
+ acdb save;
+ acdb report -db fcover.acdb -txt -o cov.txt;
+ exec cat cov.txt;
+ exit
+//use aldec riviera pro 2017.02 simulator
+///////////////// testbench environment codes////////////////
+
+
+
+//design code 
+module multiplier(
+  input [15:0] a,  
+  input [15:0] b,  
+  output [31:0] product 
+);
+  reg [31:0] result; 
+  integer i, j; 
+
+  always @(*) begin
+    result = 0; 
+    for (i = 0; i < 16; i = i + 1) begin
+      if (b[i] == 1) begin
+        result = result + (a << i); 
+      end
+    end
+  end
+  
+  assign product = result; 
+endmodule
